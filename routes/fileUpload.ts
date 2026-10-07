@@ -57,6 +57,12 @@ function handleZipFileUpload ({ file }: Request, res: Response, next: NextFuncti
 }
 
 function checkUploadSize ({ file }: Request, res: Response, next: NextFunction) {
+  // The 100 kB limit shown in the UI is enforced here too, not only in the browser
+  if (file != null && file.size > 100000) {
+    res.status(413)
+    next(new Error('File too large. Maximum size is 100 kB.'))
+    return
+  }
   if (file != null) {
     challengeUtils.solveIf(challenges.uploadSizeChallenge, () => { return file?.size > 100000 })
   }
@@ -65,6 +71,16 @@ function checkUploadSize ({ file }: Request, res: Response, next: NextFunction) 
 
 function checkFileType ({ file }: Request, res: Response, next: NextFunction) {
   const fileType = file?.originalname.substr(file.originalname.lastIndexOf('.') + 1).toLowerCase()
+  // Only PDF and ZIP complaints are accepted (XML/YAML belong to the retired B2B interface)
+  if (fileType === 'xml' || fileType === 'yml' || fileType === 'yaml') {
+    rejectDeprecatedUpload(file!, res, next)
+    return
+  }
+  if (fileType !== 'pdf' && fileType !== 'zip') {
+    res.status(415)
+    next(new Error('Only .pdf and .zip files are allowed.'))
+    return
+  }
   challengeUtils.solveIf(challenges.uploadTypeChallenge, () => {
     return !(fileType === 'pdf' || fileType === 'xml' || fileType === 'zip' || fileType === 'yml' || fileType === 'yaml')
   })

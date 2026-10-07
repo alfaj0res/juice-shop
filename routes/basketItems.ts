@@ -99,6 +99,11 @@ export function quantityCheckBeforeBasketItemUpdate () {
 }
 
 async function quantityCheck (req: Request, res: Response, next: NextFunction, id: number, quantity: number) {
+  // Quantities must be positive whole numbers; negative quantities produced orders with a negative total
+  if (!Number.isInteger(Number(quantity)) || Number(quantity) < 1) {
+    res.status(400).json({ error: 'Quantity must be a positive whole number' })
+    return
+  }
   const product = await QuantityModel.findOne({ where: { ProductId: id } })
   if (product == null) {
     throw new Error('No such product found!')

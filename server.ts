@@ -91,7 +91,6 @@ import { getLanguageList } from './routes/languages'
 import { getUserProfile } from './routes/userProfile'
 import { serveAngularClient } from './routes/angular'
 import { resetPassword } from './routes/resetPassword'
-import { serveLogFiles } from './routes/logfileServer'
 import { servePublicFiles } from './routes/fileServer'
 import { addMemory, getMemories } from './routes/memory'
 import { changePassword } from './routes/changePassword'
@@ -277,10 +276,7 @@ function configureApp (app: ReturnType<typeof express>, seq: typeof sequelize) {
   app.use('/encryptionkeys', serveIndexMiddleware, serveIndex('encryptionkeys', { icons: true, view: 'details' }))
   app.use('/encryptionkeys/:file', serveKeyFiles())
 
-  /* /logs directory browsing */ // vuln-code-snippet neutral-line accessLogDisclosureChallenge
-  app.use('/support/logs', serveIndexMiddleware, serveIndex('logs', { icons: true, view: 'details' })) // vuln-code-snippet vuln-line accessLogDisclosureChallenge
-  app.use('/support/logs', verify.accessControlChallenges()) // vuln-code-snippet hide-line
-  app.use('/support/logs/:file', serveLogFiles()) // vuln-code-snippet vuln-line accessLogDisclosureChallenge
+  /* Server logs are not served over the web at all (no listing, no download); read them on the host */ // vuln-code-snippet vuln-line accessLogDisclosureChallenge
 
   /* Swagger documentation for B2B v2 endpoints */
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument))
@@ -342,8 +338,9 @@ function configureApp (app: ReturnType<typeof express>, seq: typeof sequelize) {
   app.enable('trust proxy')
   app.use('/rest/user/reset-password', rateLimit({
     windowMs: 5 * 60 * 1000,
-    max: 100,
-    keyGenerator ({ headers, ip }: { headers: any, ip: any }) { return headers['X-Forwarded-For'] ?? ip } // vuln-code-snippet vuln-line resetPasswordMortyChallenge
+    max: 10,
+    // Key on the TCP peer address: client-supplied headers like X-Forwarded-For can be rotated to dodge the limit
+    keyGenerator (req: Request) { return req.socket.remoteAddress ?? 'unknown' } // vuln-code-snippet vuln-line resetPasswordMortyChallenge
   }))
   // vuln-code-snippet end resetPasswordMortyChallenge
 
@@ -399,6 +396,21 @@ function configureApp (app: ReturnType<typeof express>, seq: typeof sequelize) {
   app.use('/rest/basket/:id', security.isAuthorized())
   app.use('/rest/basket/:id/order', security.isAuthorized())
   /* Challenge evaluation before finale takes over */ // vuln-code-snippet hide-start
+  /* Throttle feedback submissions per client connection, in addition to the one-time CAPTCHA */
+  app.post('/api/Feedbacks', rateLimit({
+    windowMs: 60 * 1000,
+    max: 5,
+    keyGenerator (req: Request) { return req.socket.remoteAddress ?? 'unknown' }
+  }))
+  /* Ratings are 1 to 5 stars; the UI's star widget is not a validation */
+  app.post('/api/Feedbacks', (req: Request, res: Response, next: NextFunction) => {
+    const rating = Number(req.body.rating)
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      res.status(400).json({ error: 'Rating must be between 1 and 5 stars' })
+      return
+    }
+    next()
+  })
   /* Feedback is always attributed to the authenticated user (or nobody), never to a client-supplied UserId */
   app.post('/api/Feedbacks', (req: Request, res: Response, next: NextFunction) => {
     const user = security.authenticatedUsers.from(req)
@@ -416,14 +428,24 @@ function configureApp (app: ReturnType<typeof express>, seq: typeof sequelize) {
   app.post('/api/Feedbacks', verify.captchaBypassChallenge())
   /* User registration challenge verifications before finale takes over */
   app.post('/api/Users', (req: Request, res: Response, next: NextFunction) => {
-    if (req.body.email !== undefined && req.body.password !== undefined && req.body.passwordRepeat !== undefined) {
-      if (req.body.email.length !== 0 && req.body.password.length !== 0) {
-        req.body.email = req.body.email.trim()
-        req.body.password = req.body.password.trim()
-        req.body.passwordRepeat = req.body.passwordRepeat.trim()
-      } else {
-        res.status(400).send(res.__('Invalid email/password cannot be empty'))
-      }
+    // Registration input is validated on the server; the form's client-side checks can simply be skipped
+    const email = typeof req.body.email === 'string' ? req.body.email.trim() : ''
+    const password = typeof req.body.password === 'string' ? req.body.password.trim() : ''
+    const passwordRepeat = typeof req.body.passwordRepeat === 'string' ? req.body.passwordRepeat.trim() : undefined
+    if (email.length === 0 || password.length === 0 || !/^[^\s@]+@[^\s@]+$/.test(email)) {
+      res.status(400).send(res.__('Invalid email/password cannot be empty'))
+      return
+    }
+    if (passwordRepeat !== password) {
+      res.status(400).send(res.__('New and repeated password do not match.'))
+      return
+    }
+    req.body.email = email
+    req.body.password = password
+    req.body.passwordRepeat = passwordRepeat
+    // Self-registration always creates a plain customer: privilege and security fields cannot be set by the client
+    for (const field of ['role', 'deluxeToken', 'totpSecret', 'isActive', 'profileImage', 'id']) {
+      delete req.body[field]
     }
     next()
   })
@@ -749,7 +771,18 @@ logger.info(`Entity models ${colors.bold(Object.keys(sequelize.models).length.to
 /* Serve metrics */
 let metricsUpdateLoop: any
 const Metrics = metrics.observeMetrics() // vuln-code-snippet neutral-line exposedMetricsChallenge
-app.get('/metrics', utils.asyncHandler(metrics.serveMetrics())) // vuln-code-snippet vuln-line exposedMetricsChallenge
+/* Metrics are for the monitoring system only: require its bearer token (METRICS_TOKEN), or a local scrape if no token is configured */
+const metricsAccess = (req: Request, res: Response, next: NextFunction) => {
+  const metricsToken = process.env.METRICS_TOKEN
+  const remote = req.socket.remoteAddress ?? ''
+  const isLocal = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+  if ((metricsToken && req.headers.authorization === `Bearer ${metricsToken}`) || (!metricsToken && isLocal)) {
+    next()
+  } else {
+    res.status(404).send()
+  }
+}
+app.get('/metrics', metricsAccess, utils.asyncHandler(metrics.serveMetrics())) // vuln-code-snippet vuln-line exposedMetricsChallenge
 errorhandler.title = `${config.get<string>('application.name')} (Express ${utils.version('express')})`
 
 export async function start (readyCallback?: () => void) {

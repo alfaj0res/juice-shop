@@ -109,7 +109,14 @@ const UserModelInit = (sequelize: Sequelize) => { // vuln-code-snippet start wea
       },
       totpSecret: {
         type: DataTypes.STRING,
-        defaultValue: ''
+        defaultValue: '',
+        // Stored encrypted: a database leak (e.g. via injection) must not reveal users' 2FA seeds
+        set (secret: string) {
+          this.setDataValue('totpSecret', security.encryptAtRest(secret))
+        },
+        get () {
+          return security.decryptAtRest(this.getDataValue('totpSecret'))
+        }
       },
       isActive: {
         type: DataTypes.BOOLEAN,

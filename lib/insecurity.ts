@@ -60,6 +60,26 @@ export const hasExpectedAlgorithm = (token: string) => {
   }
 }
 
+// Encryption at rest for secrets that must be recoverable (e.g. TOTP seeds). The key comes from the environment,
+// or is random per process (the database is re-created on every start, so seeded secrets are re-encrypted with it).
+const atRestKey = crypto.createHash('sha256').update(process.env.SECRET_ENCRYPTION_KEY ?? crypto.randomBytes(32).toString('hex')).digest()
+
+export const encryptAtRest = (plaintext: string) => {
+  if (!plaintext) return plaintext
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv('aes-256-gcm', atRestKey, iv)
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
+  return ['enc', iv.toString('base64'), cipher.getAuthTag().toString('base64'), encrypted.toString('base64')].join(':')
+}
+
+export const decryptAtRest = (stored: string) => {
+  if (!stored?.startsWith('enc:')) return stored
+  const [, iv, tag, data] = stored.split(':')
+  const decipher = crypto.createDecipheriv('aes-256-gcm', atRestKey, Buffer.from(iv, 'base64'))
+  decipher.setAuthTag(Buffer.from(tag, 'base64'))
+  return Buffer.concat([decipher.update(Buffer.from(data, 'base64')), decipher.final()]).toString('utf8')
+}
+
 export const isAuthorized = () => {
   const jwtMiddleware = expressJwt(({ secret: publicKey }) as any)
   return (req: Request, res: Response, next: NextFunction) => {
