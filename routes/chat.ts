@@ -46,6 +46,13 @@ async function getUserId (req: Request): Promise<number | undefined> {
   return decoded?.data?.id
 }
 
+function isAdminRequest (req: Request): boolean {
+  const token = utils.jwtFrom(req)
+  if (!token || !security.verify(token)) return false
+  const decoded = security.decode(token) as { data?: { role?: string } } | undefined
+  return decoded?.data?.role === roles.admin
+}
+
 async function getUserNameFromToken (req: Request): Promise<string | undefined> {
   const userId = await getUserId(req)
   if (!userId) return undefined
@@ -232,6 +239,8 @@ export function chat () {
               return req.cookies.show_tool_calls === 'true' && role !== roles.admin
             })
             metricToolCalls.labels({ tool: event.toolName }).inc()
+            // Tool call internals are debugging information for administrators only; a client-side cookie must not unlock them
+            if (!isAdminRequest(req)) break
             res.write(`data: ${JSON.stringify({
               choices: [{
                 delta: {
