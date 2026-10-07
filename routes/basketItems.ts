@@ -6,6 +6,7 @@
 import { type Request, type Response, type NextFunction } from 'express'
 import { BasketItemModel } from '../models/basketitem'
 import { QuantityModel } from '../models/quantity'
+import { ProductModel } from '../models/product'
 import * as challengeUtils from '../lib/challengeUtils'
 
 import * as utils from '../lib/utils'
@@ -43,6 +44,13 @@ export function addBasketItem () {
         quantity: quantities[quantities.length - 1]
       }
       challengeUtils.solveIf(challenges.basketManipulateChallenge, () => { return user && basketItem.BasketId && basketItem.BasketId !== 'undefined' && user.bid != basketItem.BasketId }) // eslint-disable-line eqeqeq
+
+      // Soft-deleted products are no longer for sale; findByPk is paranoid and skips them
+      const product = await ProductModel.findByPk(basketItem.ProductId)
+      if (product == null) {
+        res.status(400).json({ error: 'Product not available' })
+        return
+      }
 
       const basketItemInstance = BasketItemModel.build(basketItem)
       try {
