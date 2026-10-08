@@ -103,14 +103,12 @@ import { retrieveLoggedInUser } from './routes/currentUser'
 import authenticatedUsers from './routes/authenticatedUsers'
 import { securityQuestion } from './routes/securityQuestion'
 import { servePremiumContent } from './routes/premiumReward'
-import { contractExploitListener } from './routes/web3Wallet'
 import { updateUserProfile } from './routes/updateUserProfile'
 import { getVideo, promotionVideo } from './routes/videoHandler'
 import { likeProductReviews } from './routes/likeProductReviews'
 import { repeatNotification } from './routes/repeatNotification'
 import { serveQuarantineFiles } from './routes/quarantineServer'
 import { showProductReviews } from './routes/showProductReviews'
-import { nftMintListener, walletNFTVerify } from './routes/nftMint'
 import { createProductReviews } from './routes/createProductReviews'
 import { getWalletBalance, addWalletBalance } from './routes/wallet'
 import { retrieveAppConfiguration } from './routes/appConfiguration'
@@ -276,7 +274,9 @@ function configureApp (app: ReturnType<typeof express>, seq: typeof sequelize) {
   app.use('/encryptionkeys', serveIndexMiddleware, serveIndex('encryptionkeys', { icons: true, view: 'details' }))
   app.use('/encryptionkeys/:file', serveKeyFiles())
 
-  /* Server logs are not served over the web at all (no listing, no download); read them on the host */ // vuln-code-snippet vuln-line accessLogDisclosureChallenge
+  /* Server logs are not served over the web at all (no listing, no download); read them on the host.
+     Answer with an explicit 404 so the path does not fall through to the SPA's index.html (status 200) */ // vuln-code-snippet vuln-line accessLogDisclosureChallenge
+  app.use('/support/logs', (req: Request, res: Response) => { res.status(404).send() })
 
   /* Swagger documentation for B2B v2 endpoints */
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument))
@@ -392,7 +392,8 @@ function configureApp (app: ReturnType<typeof express>, seq: typeof sequelize) {
   app.get('/api/SecurityAnswers', security.denyAll())
   app.use('/api/SecurityAnswers/:id', security.denyAll())
   /* REST API */
-  app.use('/rest/user/authentication-details', security.isAuthorized())
+  /* The user list with session details feeds the administration section: admins only */
+  app.use('/rest/user/authentication-details', security.isAuthorized(), security.isAdmin())
   app.use('/rest/basket/:id', security.isAuthorized())
   app.use('/rest/basket/:id/order', security.isAuthorized())
   /* Challenge evaluation before finale takes over */ // vuln-code-snippet hide-start
@@ -672,9 +673,8 @@ function configureApp (app: ReturnType<typeof express>, seq: typeof sequelize) {
   /* Web3 API endpoints */
   app.post('/rest/web3/submitKey', utils.asyncHandler(checkKeys()))
   app.get('/rest/web3/nftUnlocked', nftUnlocked())
-  app.get('/rest/web3/nftMintListen', utils.asyncHandler(nftMintListener()))
-  app.post('/rest/web3/walletNFTVerify', walletNFTVerify())
-  app.post('/rest/web3/walletExploitAddress', utils.asyncHandler(contractExploitListener()))
+  /* The Honey Pot NFT minting and the Web3 wallet integrate external contracts with known exploitable flaws;
+     their endpoints stay offline until fixed contracts are deployed */
 
   /* B2B Order API */
   app.post('/b2b/v2/orders', b2bOrder())

@@ -28,7 +28,8 @@ export function captchas () {
     }
     const captchaInstance = CaptchaModel.build(captcha)
     await captchaInstance.save()
-    res.json(captcha)
+    // Never send the answer to the client - it made the CAPTCHA trivially solvable by any script
+    res.json({ captchaId, captcha: expression })
   }
 }
 
