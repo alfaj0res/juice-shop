@@ -224,6 +224,17 @@ function configureApp (app: ReturnType<typeof express>, seq: typeof sequelize) {
   /* Check for any URLs having been called that would be expected for challenge solving without cheating */
   app.use(antiCheat.checkForPreSolveInteractions())
 
+  /* The admin page's assets are only served to admins (the page loads them via <img>, so the token comes from the cookie, not the Authorization header) */
+  app.use('/assets/public/images/padding/19px.png', (req: Request, res: Response, next: NextFunction) => {
+    const token = /(?:^|;\s*)token=([^;]+)/.exec(req.headers.cookie ?? '')?.[1] ?? ''
+    const decoded = security.verify(token) && security.decode(token)
+    if (decoded?.data?.role === security.roles.admin) {
+      next()
+    } else {
+      res.status(403).send()
+    }
+  })
+
   /* Checks for challenges solved by retrieving a file implicitly or explicitly */
   app.use('/assets/public/images/padding', verify.accessControlChallenges())
   app.use('/assets/public/images/products', verify.accessControlChallenges())

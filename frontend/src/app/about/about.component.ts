@@ -46,7 +46,7 @@ export class AboutComponent implements OnInit {
     'assets/public/images/carousel/2.jpg',
     'assets/public/images/carousel/3.jpg',
     'assets/public/images/carousel/4.jpg',
-    'assets/public/images/carousel/5.jpg', // re-encoded: the former PNG carried a hidden steganographic image
+    'assets/public/images/carousel/5.png', // re-encoded from a lossy copy: the original PNG carried a hidden steganographic image
     'assets/public/images/carousel/6.jpg',
     'assets/public/images/carousel/7.jpg'
   ]
